@@ -9,6 +9,7 @@
 (define-constant ERR_ALREADY_VOTED (err u105))
 (define-constant ERR_REFUND_PERIOD_ACTIVE (err u106))
 (define-constant ERR_NO_REFUND_AVAILABLE (err u107))
+(define-constant ERR_REFUND_PERIOD_EXPIRED (err u108))
 
 ;; Data vars
 (define-data-var project-owner principal tx-sender)
@@ -23,7 +24,8 @@
     completed: bool,
     funded: bool,
     vote-count: uint,
-    vote-threshold: uint
+    vote-threshold: uint,
+    funded-block: uint
 })
 
 (define-map milestone-funders { milestone-id: uint, funder: principal } uint)
@@ -40,7 +42,8 @@
                 completed: false,
                 funded: false,
                 vote-count: u0,
-                vote-threshold: vote-threshold
+                vote-threshold: vote-threshold,
+                funded-block: u0
             }
         )
         (var-set current-milestone (+ (var-get current-milestone) u1))
@@ -57,7 +60,7 @@
         (try! (stx-transfer? (get funds-required milestone) tx-sender (as-contract tx-sender)))
         (var-set total-funds (+ (var-get total-funds) (get funds-required milestone)))
         (map-set milestone-funders { milestone-id: milestone-id, funder: tx-sender } (get funds-required milestone))
-        (map-set milestones milestone-id (merge milestone {funded: true}))
+        (map-set milestones milestone-id (merge milestone {funded: true, funded-block: block-height}))
         (ok true)
     )
 )
@@ -93,8 +96,10 @@
     (let (
         (milestone (unwrap! (map-get? milestones milestone-id) ERR_INVALID_MILESTONE))
         (user-contribution (unwrap! (map-get? milestone-funders { milestone-id: milestone-id, funder: tx-sender }) ERR_NO_REFUND_AVAILABLE))
+        (funded-block (get funded-block milestone))
     )
-        (asserts! (< block-height (+ block-height (var-get refund-period-blocks))) ERR_REFUND_PERIOD_ACTIVE)
+        (asserts! (not (get completed milestone)) ERR_MILESTONE_NOT_COMPLETE)
+        (asserts! (< block-height (+ funded-block (var-get refund-period-blocks))) ERR_REFUND_PERIOD_EXPIRED)
         (try! (as-contract (stx-transfer? user-contribution tx-sender tx-sender)))
         (map-delete milestone-funders { milestone-id: milestone-id, funder: tx-sender })
         (ok true)
